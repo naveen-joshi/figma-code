@@ -1,0 +1,28 @@
+{
+  "name": "figma-to-angular-generator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MVP pipeline to fetch a Figma screen and generate Angular component code",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "node --loader ts-node/esm src/index.ts",
+    "generate": "npm run build && npm run start --",
+    "serve": "npm run build && node dist/index.js --serve"
+  },
+  "engines": {
+    "node": ">=18.17.0"
+  },
+  "dependencies": {
+    "@google/genai": "^1.41.0",
+    "dotenv": "^16.6.1",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.13.4",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.3"
+  }
+}

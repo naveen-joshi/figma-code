@@ -1,0 +1,40 @@
+<section class="registration-container" aria-labelledby="registration-title">
+  <header class="form-header">
+    <div class="logo-container" role="img" aria-label="Company Logo"></div>
+    <h1 id="registration-title" class="title">Create an Account</h1>
+  </header>
+
+  <form class="registration-form" (submit)="onSubmit($event)">
+    <div class="name-grid">
+      <div class="form-group">
+        <label for="first-name">First Name</label>
+        <input 
+          id="first-name" 
+          type="text" 
+          placeholder="e.g. John" 
+          aria-required="true"
+          class="input-box"
+        />
+      </div>
+      
+      <div class="form-group">
+        <label for="last-name">Last Name</label>
+        <input 
+          id="last-name" 
+          type="text" 
+          placeholder="Last name" 
+          aria-required="true"
+          class="input-box"
+        />
+      </div>
+    </div>
+
+    <button 
+      type="submit" 
+      class="submit-button" 
+      (click)="onSubmit()"
+      aria-label="Sign up for an account">
+      Sign Up
+    </button>
+  </form>
+</section>

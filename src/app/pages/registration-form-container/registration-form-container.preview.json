@@ -1,0 +1,90 @@
+{
+  "generatedAt": "2026-02-16T01:42:44.241Z",
+  "screen": {
+    "name": "Registration Form Container",
+    "id": "10:100",
+    "componentName": "registration-form-container"
+  },
+  "outputs": {
+    "pageDir": "D:\\Code\\Projects\\figma-code\\src\\app\\pages\\registration-form-container",
+    "tokenFile": "D:\\Code\\Projects\\figma-code\\src\\styles\\_figma-tokens.scss",
+    "previewFile": "D:\\Code\\Projects\\figma-code\\src\\app\\pages\\registration-form-container\\registration-form-container.preview.json"
+  },
+  "tokens": {
+    "colors": [
+      {
+        "value": "rgb(255, 255, 255)",
+        "variable": "figma-color-1"
+      },
+      {
+        "value": "rgb(51, 128, 255)",
+        "variable": "figma-color-2"
+      }
+    ],
+    "fontSizes": [
+      {
+        "value": 14,
+        "variable": "figma-font-size-1"
+      },
+      {
+        "value": 16,
+        "variable": "figma-font-size-2"
+      },
+      {
+        "value": 24,
+        "variable": "figma-font-size-3"
+      }
+    ],
+    "fontWeights": [
+      {
+        "value": 500,
+        "variable": "figma-font-weight-1"
+      },
+      {
+        "value": 600,
+        "variable": "figma-font-weight-2"
+      },
+      {
+        "value": 700,
+        "variable": "figma-font-weight-3"
+      }
+    ],
+    "spacings": [
+      {
+        "value": 8,
+        "variable": "figma-spacing-1"
+      },
+      {
+        "value": 12,
+        "variable": "figma-spacing-2"
+      },
+      {
+        "value": 16,
+        "variable": "figma-spacing-3"
+      },
+      {
+        "value": 24,
+        "variable": "figma-spacing-4"
+      },
+      {
+        "value": 40,
+        "variable": "figma-spacing-5"
+      }
+    ]
+  },
+  "sharedComponents": [],
+  "screenTreeStats": {
+    "total": 13,
+    "byKind": {
+      "container": 7,
+      "text": 5,
+      "button": 1
+    },
+    "byLayout": {
+      "column": 3,
+      "none": 8,
+      "row": 2
+    },
+    "maxDepth": 5
+  }
+}
