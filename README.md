@@ -234,7 +234,69 @@ The file key is `ABC123xyz`.
 
 ---
 
-### Figma MCP Server Integration
+### Custom Figma MCP Server
+
+This project includes a **custom MCP server** built with [FastMCP](https://gofastmcp.com/) that exposes Figma API functionality as tools for LLM applications.
+
+#### Setup
+
+```bash
+cd mcp-server
+pip install -r requirements.txt
+cp .env.example .env
+# Edit .env and add your FIGMA_TOKEN
+```
+
+#### Running
+
+```bash
+# stdio mode (for Claude Desktop, VS Code, etc.)
+python server.py
+
+# HTTP mode (for remote access)
+fastmcp run server.py:mcp --transport http --port 8000
+```
+
+#### Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `get_figma_file` | Fetch file metadata and summarized document tree |
+| `get_figma_file_full` | Fetch complete file data for processing |
+| `get_figma_node` | Fetch a specific node by ID |
+| `list_frames` | List all top-level frames and components |
+| `find_frame_by_name` | Find a frame/component by name |
+| `get_frame_full` | Get complete frame data for code generation |
+| `list_components` | List all components in a file |
+| `get_file_styles` | Get published styles (text, fill, effect, grid) |
+| `get_file_variables` | Get design variables (Enterprise only) |
+| `render_node_image` | Render a node as an image (png, jpg, svg, pdf) |
+| `get_file_comments` | Get all comments from a file |
+| `get_team_projects` | List projects in a team |
+| `get_project_files` | List files in a project |
+| `parse_figma_url` | Extract file key and node ID from a URL |
+
+#### Claude Desktop Configuration
+
+```json
+{
+  "mcpServers": {
+    "figma-custom": {
+      "command": "python",
+      "args": ["D:/Code/Projects/figma-code/mcp-server/server.py"],
+      "env": {
+        "FIGMA_TOKEN": "your_token_here"
+      }
+    }
+  }
+}
+```
+
+See `mcp-server/README.md` for full documentation.
+
+---
+
+### Figma Official MCP Server
 
 The [Figma MCP server](https://github.com/figma/mcp-server-guide) brings Figma design context directly into your IDE (VS Code, Cursor, Claude Code), enabling AI agents to generate code from Figma selections.
 
@@ -376,6 +438,11 @@ figma-code/
 │       ├── index.html             # Web UI layout
 │       ├── styles.css             # Dark theme styles
 │       └── app.js                 # Client-side JavaScript
+├── mcp-server/                    # Custom Figma MCP server (Python/FastMCP)
+│   ├── server.py                  # MCP server with tool definitions
+│   ├── figma_client.py            # Figma API client wrapper
+│   ├── utils.py                   # Utility functions
+│   └── requirements.txt           # Python dependencies
 ├── sample/                        # Example Figma JSON files
 ├── .env.example                   # Environment variable template
 ├── package.json
