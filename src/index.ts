@@ -11,8 +11,10 @@ import {
 import { normalizeScreen } from "./normalize.js";
 import { generateAngularScreen } from "./angular-generator.js";
 import { generateAngularScreenWithAI } from "./ai/generator.js";
+import { generateReactScreen } from "./react-generator.js";
+import { generateReactScreenWithAI } from "./ai/react-generator.js";
 import { createServer } from "./server.js";
-import { FigmaPipeline } from "./pipeline.js";
+import { FigmaPipeline, Framework } from "./pipeline.js";
 
 interface CliArgs {
   file?: string;
@@ -23,6 +25,7 @@ interface CliArgs {
   apiKey?: string;
   serve?: boolean;
   port?: number;
+  framework?: Framework;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -75,12 +78,22 @@ function parseArgs(argv: string[]): CliArgs {
       args.port = parseInt(argv[i + 1], 10);
       i += 1;
     }
+
+    if (token === "--framework") {
+      const fw = argv[i + 1];
+      if (fw === "angular" || fw === "react") {
+        args.framework = fw;
+      } else {
+        throw new Error(`Invalid framework: '${fw}'. Use 'angular' or 'react'.`);
+      }
+      i += 1;
+    }
   }
 
   return args;
 }
 
-function assertArgs(args: CliArgs): asserts args is { file?: string; json?: string; screen: string; out: string; ai?: boolean; apiKey?: string; serve?: boolean; port?: number } {
+function assertArgs(args: CliArgs): asserts args is { file?: string; json?: string; screen: string; out: string; ai?: boolean; apiKey?: string; serve?: boolean; port?: number; framework?: Framework } {
   // In serve mode, screen/file/json are not required
   if (args.serve) {
     return;
@@ -156,18 +169,25 @@ async function run(): Promise<void> {
     }
 
     // Step 4: Generate via pipeline
-    console.log(`  ⚙️  Generating Angular component...`);
+    const fw = cliArgs.framework ?? "angular";
+    console.log(`  ⚙️  Generating ${fw === "react" ? "React" : "Angular"} component...`);
     const generated = await pipeline.generate({
       nodeId: targetScreen.id,
       screenName: cliArgs.screen,
       outputRoot: cliArgs.out,
       useAI: !!cliArgs.ai,
       apiKey,
+      framework: fw,
     });
 
     console.log("\n  ✅ Component generated successfully!");
+    console.log(`  Framework: ${fw}`);
     console.log(`  Component: ${generated.componentName}`);
-    console.log(`  Files:\n   - ${generated.tsPath}\n   - ${generated.htmlPath}\n   - ${generated.scssPath}`);
+    if (fw === "react") {
+      console.log(`  Files:\n   - ${generated.tsxPath}\n   - ${generated.cssPath}`);
+    } else {
+      console.log(`  Files:\n   - ${generated.tsPath}\n   - ${generated.htmlPath}\n   - ${generated.scssPath}`);
+    }
     return;
   }
 
@@ -190,38 +210,70 @@ async function run(): Promise<void> {
   }
 
   const normalized = normalizeScreen(screen);
+  const fw = cliArgs.framework ?? "angular";
 
   if (cliArgs.ai) {
-    console.log("Interactive AI Mode enabled.");
+    console.log(`Interactive AI Mode enabled (${fw}).`);
     const apiKey = cliArgs.apiKey || process.env.GEMINI_API_KEY!;
-    const generated = await generateAngularScreenWithAI(normalized, cliArgs.out, apiKey);
 
-    console.log("AI-Enhanced Angular component generated successfully.");
-    console.log(`Component: ${generated.componentName}`);
-    console.log(`Output directory: ${generated.componentDir}`);
-    console.log(`Files:\n - ${generated.tsPath}\n - ${generated.htmlPath}\n - ${generated.scssPath}`);
+    if (fw === "react") {
+      const generated = await generateReactScreenWithAI(normalized, cliArgs.out, apiKey);
+      console.log("AI-Enhanced React component generated successfully.");
+      console.log(`Component: ${generated.componentName}`);
+      console.log(`Output directory: ${generated.componentDir}`);
+      console.log(`Files:\n - ${generated.tsxPath}\n - ${generated.cssPath}`);
+    } else {
+      const generated = await generateAngularScreenWithAI(normalized, cliArgs.out, apiKey);
+      console.log("AI-Enhanced Angular component generated successfully.");
+      console.log(`Component: ${generated.componentName}`);
+      console.log(`Output directory: ${generated.componentDir}`);
+      console.log(`Files:\n - ${generated.tsPath}\n - ${generated.htmlPath}\n - ${generated.scssPath}`);
+    }
     return;
   }
 
-  const generated = await generateAngularScreen(normalized, {
-    outputRoot: cliArgs.out,
-  });
-
-  console.log("Angular component generated successfully.");
-  console.log(`Component: ${generated.componentName}`);
-  console.log(`Output directory: ${generated.componentDir}`);
-  console.log(`Files:\n - ${generated.tsPath}\n - ${generated.htmlPath}\n - ${generated.scssPath}`);
-  console.log(`Design tokens: ${generated.tokenPath}`);
-  console.log(`Preview report: ${generated.previewReportPath}`);
-
-  if (generated.sharedComponents.length > 0) {
-    console.log(`Shared components generated: ${generated.sharedComponents.length}`);
-    generated.sharedComponents.forEach((component) => {
-      console.log(` - ${component.componentName} (occurrences: ${component.occurrences})`);
-      console.log(`   ${component.tsPath}`);
+  if (fw === "react") {
+    const generated = await generateReactScreen(normalized, {
+      outputRoot: cliArgs.out,
     });
+
+    console.log("React component generated successfully.");
+    console.log(`Component: ${generated.componentName}`);
+    console.log(`Output directory: ${generated.componentDir}`);
+    console.log(`Files:\n - ${generated.tsxPath}\n - ${generated.cssPath}`);
+    console.log(`Design tokens: ${generated.tokenPath}`);
+    console.log(`Preview report: ${generated.previewReportPath}`);
+
+    if (generated.sharedComponents.length > 0) {
+      console.log(`Shared components generated: ${generated.sharedComponents.length}`);
+      generated.sharedComponents.forEach((component) => {
+        console.log(` - ${component.componentName} (occurrences: ${component.occurrences})`);
+        console.log(`   ${component.tsxPath}`);
+      });
+    } else {
+      console.log("Shared components generated: 0");
+    }
   } else {
-    console.log("Shared components generated: 0");
+    const generated = await generateAngularScreen(normalized, {
+      outputRoot: cliArgs.out,
+    });
+
+    console.log("Angular component generated successfully.");
+    console.log(`Component: ${generated.componentName}`);
+    console.log(`Output directory: ${generated.componentDir}`);
+    console.log(`Files:\n - ${generated.tsPath}\n - ${generated.htmlPath}\n - ${generated.scssPath}`);
+    console.log(`Design tokens: ${generated.tokenPath}`);
+    console.log(`Preview report: ${generated.previewReportPath}`);
+
+    if (generated.sharedComponents.length > 0) {
+      console.log(`Shared components generated: ${generated.sharedComponents.length}`);
+      generated.sharedComponents.forEach((component) => {
+        console.log(` - ${component.componentName} (occurrences: ${component.occurrences})`);
+        console.log(`   ${component.tsPath}`);
+      });
+    } else {
+      console.log("Shared components generated: 0");
+    }
   }
 }
 

@@ -12,8 +12,12 @@ import {
 import { normalizeScreen } from "./normalize.js";
 import { resolveVariablesToTokens, tokensToScss, ResolvedDesignTokens } from "./figma-variables.js";
 import { generateAngularScreenWithAI } from "./ai/generator.js";
+import { generateReactScreenWithAI } from "./ai/react-generator.js";
 import { generateAngularScreen } from "./angular-generator.js";
+import { generateReactScreen } from "./react-generator.js";
 import { extractDesignSystem, DesignSystem, designSystemToCSS, designSystemToSCSS } from "./design-system.js";
+
+export type Framework = "angular" | "react";
 
 // ─── Pipeline Result Types ──────────────────────────────────
 
@@ -36,9 +40,14 @@ export interface PipelineScreenshotResult {
 
 export interface PipelineGenerateResult {
     componentName: string;
-    htmlPath: string;
-    scssPath: string;
-    tsPath: string;
+    framework: Framework;
+    // Angular paths
+    htmlPath?: string;
+    scssPath?: string;
+    tsPath?: string;
+    // React paths
+    tsxPath?: string;
+    cssPath?: string;
 }
 
 // ─── Pipeline Class ─────────────────────────────────────────
@@ -140,7 +149,10 @@ export class FigmaPipeline {
         outputRoot: string;
         useAI: boolean;
         apiKey?: string;
+        framework?: Framework;
     }): Promise<PipelineGenerateResult> {
+        const framework = opts.framework ?? "angular";
+
         // Resolve the target node
         let targetNode: FigmaNode;
 
@@ -177,10 +189,21 @@ export class FigmaPipeline {
             if (!opts.apiKey) {
                 throw new Error("AI mode requires a Gemini API key (--api-key or GEMINI_API_KEY env var).");
             }
-            return generateAngularScreenWithAI(normalized, opts.outputRoot, opts.apiKey);
+            if (framework === "react") {
+                const result = await generateReactScreenWithAI(normalized, opts.outputRoot, opts.apiKey);
+                return { componentName: result.componentName, framework, tsxPath: result.tsxPath, cssPath: result.cssPath };
+            }
+            const result = await generateAngularScreenWithAI(normalized, opts.outputRoot, opts.apiKey);
+            return { componentName: result.componentName, framework, htmlPath: result.htmlPath, scssPath: result.scssPath, tsPath: result.tsPath };
         }
 
-        return generateAngularScreen(normalized, { outputRoot: opts.outputRoot });
+        if (framework === "react") {
+            const result = await generateReactScreen(normalized, { outputRoot: opts.outputRoot });
+            return { componentName: result.componentName, framework, tsxPath: result.tsxPath, cssPath: result.cssPath };
+        }
+
+        const result = await generateAngularScreen(normalized, { outputRoot: opts.outputRoot });
+        return { componentName: result.componentName, framework, htmlPath: result.htmlPath, scssPath: result.scssPath, tsPath: result.tsPath };
     }
 
     /** Fetch the complete design system (colors, typography, spacing, etc.) */

@@ -10,8 +10,11 @@ import {
 import { normalizeScreen } from "./normalize.js";
 import { generateAngularScreen } from "./angular-generator.js";
 import { generateAngularScreenWithAI } from "./ai/generator.js";
-import { FigmaPipeline } from "./pipeline.js";
+import { generateReactScreen } from "./react-generator.js";
+import { generateReactScreenWithAI } from "./ai/react-generator.js";
+import { FigmaPipeline, Framework } from "./pipeline.js";
 import { designSystemToCSS, designSystemToSCSS } from "./design-system.js";
+import { AIClient } from "./ai/client.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -122,12 +125,13 @@ export function createServer(port: number, apiKey?: string) {
     /** Full pipeline: Figma URL → generated code */
     app.post("/api/generate-from-figma", async (req, res) => {
         try {
-            const { figmaUrl, figmaToken, nodeId, screenName, useAI } = req.body as {
+            const { figmaUrl, figmaToken, nodeId, screenName, useAI, framework } = req.body as {
                 figmaUrl: string;
                 figmaToken: string;
                 nodeId?: string;
                 screenName?: string;
                 useAI?: boolean;
+                framework?: Framework;
             };
 
             if (!figmaUrl || !figmaToken) {
@@ -146,6 +150,7 @@ export function createServer(port: number, apiKey?: string) {
                 return;
             }
 
+            const fw: Framework = framework ?? "angular";
             const tmpOut = path.join(__dirname, "..", ".generated");
             const pipeline = new FigmaPipeline(figmaUrl, figmaToken);
             const generated = await pipeline.generate({
@@ -154,19 +159,24 @@ export function createServer(port: number, apiKey?: string) {
                 outputRoot: tmpOut,
                 useAI: !!useAI,
                 apiKey: key,
+                framework: fw,
             });
 
-            // Read files back to return content
-            const [html, scss, ts] = await Promise.all([
-                readFile(generated.htmlPath, "utf8"),
-                readFile(generated.scssPath, "utf8"),
-                readFile(generated.tsPath, "utf8"),
-            ]);
-
-            res.json({
-                componentName: generated.componentName,
-                files: { html, scss, ts },
-            });
+            // Read files back to return content based on framework
+            if (fw === "react") {
+                const [tsx, css] = await Promise.all([
+                    readFile(generated.tsxPath!, "utf8"),
+                    readFile(generated.cssPath!, "utf8"),
+                ]);
+                res.json({ componentName: generated.componentName, framework: fw, files: { tsx, css } });
+            } else {
+                const [html, scss, ts] = await Promise.all([
+                    readFile(generated.htmlPath!, "utf8"),
+                    readFile(generated.scssPath!, "utf8"),
+                    readFile(generated.tsPath!, "utf8"),
+                ]);
+                res.json({ componentName: generated.componentName, framework: fw, files: { html, scss, ts } });
+            }
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             res.status(500).json({ error: msg });
@@ -246,10 +256,11 @@ export function createServer(port: number, apiKey?: string) {
     /** Generate from pasted JSON */
     app.post("/api/generate", async (req, res) => {
         try {
-            const { json, screenName, useAI } = req.body as {
+            const { json, screenName, useAI, framework } = req.body as {
                 json: string;
                 screenName: string;
                 useAI?: boolean;
+                framework?: Framework;
             };
 
             if (!json || !screenName) {
@@ -277,6 +288,7 @@ export function createServer(port: number, apiKey?: string) {
                 return;
             }
 
+            const fw: Framework = framework ?? "angular";
             const normalized = normalizeScreen(screen);
             const tmpOut = path.join(__dirname, "..", ".generated");
 
@@ -289,24 +301,126 @@ export function createServer(port: number, apiKey?: string) {
                     return;
                 }
 
-                const generated = await generateAngularScreenWithAI(normalized, tmpOut, key);
-                const [html, scss, ts] = await Promise.all([
-                    readFile(generated.htmlPath, "utf8"),
-                    readFile(generated.scssPath, "utf8"),
-                    readFile(generated.tsPath, "utf8"),
-                ]);
-
-                res.json({ componentName: generated.componentName, files: { html, scss, ts } });
+                if (fw === "react") {
+                    const generated = await generateReactScreenWithAI(normalized, tmpOut, key);
+                    const [tsx, css] = await Promise.all([
+                        readFile(generated.tsxPath, "utf8"),
+                        readFile(generated.cssPath, "utf8"),
+                    ]);
+                    res.json({ componentName: generated.componentName, framework: fw, files: { tsx, css } });
+                } else {
+                    const generated = await generateAngularScreenWithAI(normalized, tmpOut, key);
+                    const [html, scss, ts] = await Promise.all([
+                        readFile(generated.htmlPath, "utf8"),
+                        readFile(generated.scssPath, "utf8"),
+                        readFile(generated.tsPath, "utf8"),
+                    ]);
+                    res.json({ componentName: generated.componentName, framework: fw, files: { html, scss, ts } });
+                }
             } else {
-                const generated = await generateAngularScreen(normalized, { outputRoot: tmpOut });
-                const [html, scss, ts] = await Promise.all([
-                    readFile(generated.htmlPath, "utf8"),
-                    readFile(generated.scssPath, "utf8"),
-                    readFile(generated.tsPath, "utf8"),
-                ]);
-
-                res.json({ componentName: generated.componentName, files: { html, scss, ts } });
+                if (fw === "react") {
+                    const generated = await generateReactScreen(normalized, { outputRoot: tmpOut });
+                    const [tsx, css] = await Promise.all([
+                        readFile(generated.tsxPath, "utf8"),
+                        readFile(generated.cssPath, "utf8"),
+                    ]);
+                    res.json({ componentName: generated.componentName, framework: fw, files: { tsx, css } });
+                } else {
+                    const generated = await generateAngularScreen(normalized, { outputRoot: tmpOut });
+                    const [html, scss, ts] = await Promise.all([
+                        readFile(generated.htmlPath, "utf8"),
+                        readFile(generated.scssPath, "utf8"),
+                        readFile(generated.tsPath, "utf8"),
+                    ]);
+                    res.json({ componentName: generated.componentName, framework: fw, files: { html, scss, ts } });
+                }
             }
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            res.status(500).json({ error: msg });
+        }
+    });
+
+    /** Iterate on generated code using AI */
+    app.post("/api/iterate", async (req, res) => {
+        try {
+            const { files, framework, prompt } = req.body as {
+                files: Record<string, string>;
+                framework: Framework;
+                prompt: string;
+            };
+
+            if (!files || !prompt) {
+                res.status(400).json({ error: "Missing 'files' or 'prompt'." });
+                return;
+            }
+
+            const key = apiKey || process.env.GEMINI_API_KEY;
+            if (!key) {
+                res.status(400).json({ error: "AI iteration requires GEMINI_API_KEY." });
+                return;
+            }
+
+            const fw = framework ?? "angular";
+            const client = new AIClient(key);
+
+            let iteratePrompt: string;
+            if (fw === "react") {
+                iteratePrompt = [
+                    "You are an expert React developer. The user has generated a React component and wants to refine it.",
+                    "",
+                    "Current TSX:",
+                    "```tsx",
+                    files.tsx || "",
+                    "```",
+                    "",
+                    "Current CSS Module:",
+                    "```css",
+                    files.css || "",
+                    "```",
+                    "",
+                    `User's request: ${prompt}`,
+                    "",
+                    "Return the updated code as a JSON object with keys: \"tsx\", \"css\".",
+                    "Do not include markdown code blocks — just raw JSON.",
+                ].join("\n");
+            } else {
+                iteratePrompt = [
+                    "You are an expert Angular developer. The user has generated an Angular component and wants to refine it.",
+                    "",
+                    "Current HTML:",
+                    "```html",
+                    files.html || "",
+                    "```",
+                    "",
+                    "Current SCSS:",
+                    "```scss",
+                    files.scss || "",
+                    "```",
+                    "",
+                    "Current TypeScript:",
+                    "```typescript",
+                    files.ts || "",
+                    "```",
+                    "",
+                    `User's request: ${prompt}`,
+                    "",
+                    "Return the updated code as a JSON object with keys: \"html\", \"scss\", \"ts\".",
+                    "Do not include markdown code blocks — just raw JSON.",
+                ].join("\n");
+            }
+
+            const rawResponse = await client.generateContent(iteratePrompt);
+            const cleanJson = rawResponse.replace(/```json/g, "").replace(/```/g, "").trim();
+
+            let result: Record<string, string>;
+            try {
+                result = JSON.parse(cleanJson);
+            } catch {
+                throw new Error(`Failed to parse AI iteration response.`);
+            }
+
+            res.json({ files: result, framework: fw });
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             res.status(500).json({ error: msg });
@@ -319,10 +433,11 @@ export function createServer(port: number, apiKey?: string) {
     });
 
     app.listen(port, () => {
-        console.log(`\n  🚀 Figma-to-Angular Generator`);
+        console.log(`\n  🚀 Figma-to-Code Generator`);
         console.log(`  ────────────────────────────────`);
         console.log(`  Web UI:  http://localhost:${port}`);
         console.log(`  API:     http://localhost:${port}/api/generate`);
+        console.log(`  Frameworks: Angular, React`);
         console.log(`  Press Ctrl+C to stop.\n`);
     });
 

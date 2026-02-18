@@ -1,8 +1,8 @@
 {
-  "name": "figma-to-angular-generator",
-  "version": "0.1.0",
+  "name": "figma-to-code",
+  "version": "0.2.0",
   "private": true,
-  "description": "MVP pipeline to fetch a Figma screen and generate Angular component code",
+  "description": "Generate Angular or React components from Figma designs using AI",
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",

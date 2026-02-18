@@ -1,551 +1,763 @@
-// ─── State ──────────────────────────────────────────
-let figmaJson = "";
-let generatedFiles = { html: "", scss: "", ts: "" };
-let activeTab = "html";
+// ── State ──────────────────────────────────────────────
 let activeSource = "figma-url";
+let selectedFramework = "angular";
+let generatedFiles = {}; // latest generated code per file type
+let currentTab = "html";
+let dsOutputFormat = "css";
+let cachedDesignSystemCSS = "";
+let cachedDesignSystemSCSS = "";
+let editor = null; // CodeMirror instance
+let editorDebounce = null;
 
-// Pipeline state (for Figma URL mode)
-let pipelineScreens = []; // { name, id }[]
-let selectedNodeId = "";
+// ── DOM References ─────────────────────────────────────
+const $ = (sel) => document.querySelector(sel);
+const $$ = (sel) => [...document.querySelectorAll(sel)];
 
-// Design system state
-let dsFormat = "css";
-let dsCssContent = "";
+// Input elements
+const figmaUrlInput = $("#figmaUrlInput");
+const figmaTokenInput = $("#figmaTokenInput");
+const fetchFileBtn = $("#fetchFileBtn");
+const jsonInput = $("#jsonInput");
+const screenSelect = $("#screenSelect");
+const screenGroup = $("#screenGroup");
+const aiToggle = $("#aiToggle");
+const generateBtn = $("#generateBtn");
+const designSystemBtn = $("#designSystemBtn");
 
-// ─── DOM Refs ───────────────────────────────────────
-const $ = (id) => document.getElementById(id);
+// Output elements
+const codeTabs = $("#codeTabs");
+const codePanel = $("#codePanel");
+const emptyState = $("#emptyState");
+const componentName = $("#componentName");
+const copyBtn = $("#copyBtn");
+const previewPanel = $("#previewPanel");
+const previewFrame = $("#previewFrame");
+const iteratePanel = $("#iteratePanel");
+const iterateInput = $("#iterateInput");
+const iterateBtn = $("#iterateBtn");
 
-// Source tabs
-const sourceTabs = document.querySelectorAll(".source-tab");
-const figmaUrlPanel = $("figmaUrlPanel");
-const jsonPastePanel = $("jsonPastePanel");
+// Console elements
+const consolePanel = $("#consolePanel");
+const consoleOutput = $("#consoleOutput");
+const consoleClearBtn = $("#consoleClearBtn");
 
-// Figma URL inputs
-const figmaUrlInput = $("figmaUrlInput");
-const figmaTokenInput = $("figmaTokenInput");
-const fetchFileBtn = $("fetchFileBtn");
+// Pipeline UI
+const pipelineStatus = $("#pipelineStatus");
+const screenshotPreview = $("#screenshotPreview");
+const screenshotImg = $("#screenshotImg");
 
-// Pipeline
-const pipelineStatus = $("pipelineStatus");
-const stepFetch = $("stepFetch");
-const stepSelect = $("stepSelect");
-const stepScreenshot = $("stepScreenshot");
-const stepGenerate = $("stepGenerate");
-const screenshotPreview = $("screenshotPreview");
-const screenshotImg = $("screenshotImg");
-
-// JSON inputs
-const uploadZone = $("uploadZone");
-const fileInput = $("fileInput");
-const browseBtn = $("browseBtn");
-const jsonInput = $("jsonInput");
-
-// Shared
-const screenGroup = $("screenGroup");
-const screenSelect = $("screenSelect");
-const aiToggle = $("aiToggle");
-const generateBtn = $("generateBtn");
-
-// Output
-const codeTabs = $("codeTabs");
-const emptyState = $("emptyState");
-const codePanel = $("codePanel");
-const codeContent = $("codeContent");
-const componentNameEl = $("componentName");
-const copyBtn = $("copyBtn");
-
-// Design System
-const designSystemBtn = $("designSystemBtn");
-const formatToggle = $("formatToggle");
-const designSystemResults = $("designSystemResults");
-const dsSourceBadge = $("dsSourceBadge");
-const dsStats = $("dsStats");
-const dsCodeContent = $("dsCodeContent");
-const dsCopyBtn = $("dsCopyBtn");
-const dsDownloadBtn = $("dsDownloadBtn");
-
-// ─── Token Persistence (sessionStorage) ─────────────
+// ── Token Persistence ──────────────────────────────────
 const TOKEN_KEY = "figma_pat";
-(() => {
-  const stored = sessionStorage.getItem(TOKEN_KEY);
-  if (stored && figmaTokenInput) figmaTokenInput.value = stored;
-})();
+const saved = sessionStorage.getItem(TOKEN_KEY);
+if (saved) figmaTokenInput.value = saved;
+figmaTokenInput.addEventListener("input", () => {
+  sessionStorage.setItem(TOKEN_KEY, figmaTokenInput.value.trim());
+});
 
-if (figmaTokenInput) {
-  figmaTokenInput.addEventListener("input", () => {
-    sessionStorage.setItem(TOKEN_KEY, figmaTokenInput.value);
+// ── Framework Selector ─────────────────────────────────
+$$(".fw-pill").forEach((pill) => {
+  pill.addEventListener("click", () => {
+    $$(".fw-pill").forEach((p) => p.classList.remove("active"));
+    pill.classList.add("active");
+    selectedFramework = pill.dataset.framework;
+    updateTabsForFramework();
+    // Reset output when switching framework
+    if (Object.keys(generatedFiles).length > 0) {
+      switchToFirstTab();
+    }
   });
+});
+
+function updateTabsForFramework() {
+  const tabs = codeTabs.querySelectorAll(".tab:not(.tab-preview)");
+  tabs.forEach((t) => t.remove());
+
+  const previewTab = codeTabs.querySelector(".tab-preview");
+
+  if (selectedFramework === "react") {
+    const tsxTab = createTab("tsx", "TSX");
+    const cssTab = createTab("css", "CSS");
+    codeTabs.insertBefore(tsxTab, previewTab);
+    codeTabs.insertBefore(cssTab, previewTab);
+  } else {
+    const htmlTab = createTab("html", "HTML");
+    const scssTab = createTab("scss", "SCSS");
+    const tsTab = createTab("ts", "TypeScript");
+    codeTabs.insertBefore(htmlTab, previewTab);
+    codeTabs.insertBefore(scssTab, previewTab);
+    codeTabs.insertBefore(tsTab, previewTab);
+  }
 }
 
-// ─── Source Tab Switching ────────────────────────────
-sourceTabs.forEach((tab) => {
+function createTab(key, label) {
+  const btn = document.createElement("button");
+  btn.className = "tab";
+  btn.dataset.tab = key;
+  btn.textContent = label;
+  btn.addEventListener("click", () => switchTab(key));
+  return btn;
+}
+
+function switchToFirstTab() {
+  const firstTab = selectedFramework === "react" ? "tsx" : "html";
+  switchTab(firstTab);
+}
+
+// ── Source Tabs ─────────────────────────────────────────
+$$(".source-tab").forEach((tab) => {
   tab.addEventListener("click", () => {
-    const source = tab.dataset.source;
-    if (source === activeSource) return;
-    activeSource = source;
-
-    sourceTabs.forEach((t) => t.classList.remove("active"));
+    $$(".source-tab").forEach((t) => t.classList.remove("active"));
     tab.classList.add("active");
+    activeSource = tab.dataset.source;
 
-    figmaUrlPanel.classList.toggle("active", source === "figma-url");
-    jsonPastePanel.classList.toggle("active", source === "json-paste");
+    $$("#figmaUrlPanel").forEach(
+      (p) => (p.style.display = activeSource === "figma-url" ? "" : "none"),
+    );
+    $$("#jsonPastePanel").forEach(
+      (p) => (p.style.display = activeSource === "json-paste" ? "" : "none"),
+    );
 
-    // Reset screens when switching
-    resetScreenSelector();
-    updateGenerateBtn();
+    $$(".source-panel").forEach((p) => p.classList.remove("active"));
+    if (activeSource === "figma-url") {
+      $("#figmaUrlPanel").classList.add("active");
+    } else {
+      $("#jsonPastePanel").classList.add("active");
+    }
+
+    updateGenerateButton();
   });
 });
 
-// ─── Figma URL Pipeline ─────────────────────────────
-fetchFileBtn.addEventListener("click", async () => {
-  const url = figmaUrlInput.value.trim();
-  const token = figmaTokenInput.value.trim();
-
-  if (!url || !token) {
-    showToast("Please enter both a Figma URL and access token.", "error");
-    return;
-  }
-
-  // Show pipeline
-  pipelineStatus.hidden = false;
-  screenshotPreview.hidden = true;
-  resetPipelineSteps();
-  setStepState(stepFetch, "active");
-  fetchFileBtn.classList.add("loading");
-  fetchFileBtn.disabled = true;
-
-  try {
-    const res = await fetch("/api/fetch-file", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ figmaUrl: url, figmaToken: token }),
-    });
-
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error);
-
-    setStepState(stepFetch, "done");
-    pipelineScreens = data.screens || [];
-
-    if (pipelineScreens.length === 0) {
-      showToast("No screens found in this file.", "error");
-      setStepState(stepSelect, "error");
-      return;
-    }
-
-    // Populate screen selector
-    populateScreenSelector(pipelineScreens.map((s) => s.name));
-    setStepState(stepSelect, "active");
-
-    showToast(
-      `Found ${pipelineScreens.length} screens in "${data.fileName}"`,
-      "success",
-    );
-
-    // Enable design system button once we have a valid file
-    designSystemBtn.disabled = false;
-  } catch (err) {
-    setStepState(stepFetch, "error");
-    showToast(err.message, "error");
-  } finally {
-    fetchFileBtn.classList.remove("loading");
-    fetchFileBtn.disabled = false;
-  }
-});
-
-// ─── Screen Selection (handles both modes) ──────────
-screenSelect.addEventListener("change", async () => {
-  const selected = screenSelect.value;
-  if (!selected) {
-    generateBtn.disabled = true;
-    return;
-  }
-
+// ── Enable/disable generate button ─────────────────────
+function updateGenerateButton() {
   if (activeSource === "figma-url") {
-    // Find the node ID for this screen name
-    const screen = pipelineScreens.find((s) => s.name === selected);
-    if (screen) {
-      selectedNodeId = screen.id;
-
-      // Load screenshot
-      setStepState(stepSelect, "done");
-      setStepState(stepScreenshot, "active");
-
-      try {
-        const res = await fetch("/api/screenshot", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            figmaUrl: figmaUrlInput.value.trim(),
-            figmaToken: figmaTokenInput.value.trim(),
-            nodeId: selectedNodeId,
-          }),
-        });
-
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error);
-
-        if (data.url) {
-          screenshotImg.src = data.url;
-          screenshotPreview.hidden = false;
-        }
-
-        setStepState(stepScreenshot, "done");
-      } catch (err) {
-        // Screenshot is non-blocking
-        setStepState(stepScreenshot, "error");
-        console.warn("Screenshot failed:", err.message);
-      }
-    }
+    generateBtn.disabled = !screenSelect.value;
+    designSystemBtn.disabled = !(
+      figmaUrlInput.value.trim() && figmaTokenInput.value.trim()
+    );
+  } else {
+    generateBtn.disabled = !(jsonInput.value.trim() && screenSelect.value);
+    designSystemBtn.disabled = true;
   }
+}
 
-  generateBtn.disabled = false;
+figmaUrlInput.addEventListener("input", updateGenerateButton);
+figmaTokenInput.addEventListener("input", updateGenerateButton);
+jsonInput.addEventListener("input", () => {
+  tryParseScreens(jsonInput.value);
+  updateGenerateButton();
 });
+screenSelect.addEventListener("change", updateGenerateButton);
 
-// ─── Upload / Paste (JSON mode) ─────────────────────
+// ── File Upload / Drop ─────────────────────────────────
+const uploadZone = $("#uploadZone");
+const fileInput = $("#fileInput");
+const browseBtn = $("#browseBtn");
+
 browseBtn.addEventListener("click", () => fileInput.click());
 fileInput.addEventListener("change", () => {
-  if (fileInput.files.length) handleFile(fileInput.files[0]);
+  if (fileInput.files[0]) readFile(fileInput.files[0]);
 });
 
 uploadZone.addEventListener("dragover", (e) => {
   e.preventDefault();
   uploadZone.classList.add("drag-over");
 });
-uploadZone.addEventListener("dragleave", () => {
-  uploadZone.classList.remove("drag-over");
-});
+uploadZone.addEventListener("dragleave", () =>
+  uploadZone.classList.remove("drag-over"),
+);
 uploadZone.addEventListener("drop", (e) => {
   e.preventDefault();
   uploadZone.classList.remove("drag-over");
-  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+  if (e.dataTransfer.files[0]) readFile(e.dataTransfer.files[0]);
 });
 
-async function handleFile(file) {
-  try {
-    const text = await file.text();
-    jsonInput.value = text;
-    figmaJson = text;
-    uploadZone.classList.add("has-file");
-    await loadScreensFromJson(text);
-  } catch (err) {
-    showToast("Failed to read file: " + err.message, "error");
-  }
+function readFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    jsonInput.value = reader.result;
+    tryParseScreens(reader.result);
+    updateGenerateButton();
+    showToast("success", `Loaded ${file.name}`);
+  };
+  reader.readAsText(file);
 }
 
-jsonInput.addEventListener("input", async () => {
-  figmaJson = jsonInput.value;
-  if (figmaJson.trim().length > 10) {
-    await loadScreensFromJson(figmaJson);
-  }
-});
+// ── Parse screens from JSON ────────────────────────────
+let parseTimer;
+function tryParseScreens(raw) {
+  clearTimeout(parseTimer);
+  if (!raw.trim()) return;
 
-async function loadScreensFromJson(json) {
-  try {
-    const res = await fetch("/api/screens", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ json }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error);
+  parseTimer = setTimeout(() => {
+    try {
+      const data = JSON.parse(raw);
+      const root = data.document || data;
+      const names = collectFrameNames(root);
 
-    populateScreenSelector(data.screens);
-  } catch (err) {
-    showToast(err.message, "error");
-  }
-}
+      if (names.length === 0) {
+        showToast("error", "Valid JSON, but no frames/components found.");
+      } else {
+        showToast("success", `Found ${names.length} screens from JSON.`);
+      }
 
-// ─── Generate ───────────────────────────────────────
-generateBtn.addEventListener("click", async () => {
-  const screen = screenSelect.value;
-  if (!screen) return;
-
-  setLoading(true);
-
-  try {
-    let result;
-
-    if (activeSource === "figma-url") {
-      setStepState(stepGenerate, "active");
-
-      const res = await fetch("/api/generate-from-figma", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          figmaUrl: figmaUrlInput.value.trim(),
-          figmaToken: figmaTokenInput.value.trim(),
-          nodeId: selectedNodeId,
-          screenName: screen,
-          useAI: aiToggle.checked,
-        }),
-      });
-
-      result = await res.json();
-      if (!res.ok) throw new Error(result.error);
-
-      setStepState(stepGenerate, "done");
-    } else {
-      const res = await fetch("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          json: figmaJson,
-          screenName: screen,
-          useAI: aiToggle.checked,
-        }),
-      });
-
-      result = await res.json();
-      if (!res.ok) throw new Error(result.error);
+      populateScreenSelect(names);
+    } catch {
+      // ignore parse errors while typing
     }
+  }, 500);
+}
 
-    generatedFiles = result.files;
-    componentNameEl.textContent = result.componentName;
-    showCode();
-    showToast("Component generated successfully!", "success");
-  } catch (err) {
-    if (activeSource === "figma-url") setStepState(stepGenerate, "error");
-    showToast(err.message, "error");
-  } finally {
-    setLoading(false);
+function collectFrameNames(node, list = []) {
+  if (["FRAME", "COMPONENT", "COMPONENT_SET", "SECTION"].includes(node.type)) {
+    list.push(node.name);
   }
-});
-
-// ─── Code Tabs ──────────────────────────────────────
-document.querySelectorAll("#codeTabs .tab").forEach((tab) => {
-  tab.addEventListener("click", () => {
-    activeTab = tab.dataset.tab;
-    document
-      .querySelectorAll("#codeTabs .tab")
-      .forEach((t) => t.classList.remove("active"));
-    tab.classList.add("active");
-    renderActiveTab();
-  });
-});
-
-// ─── Copy ───────────────────────────────────────────
-copyBtn.addEventListener("click", async () => {
-  try {
-    await navigator.clipboard.writeText(generatedFiles[activeTab] || "");
-    copyBtn.classList.add("copied");
-    copyBtn.querySelector("span").textContent = "Copied!";
-    setTimeout(() => {
-      copyBtn.classList.remove("copied");
-      copyBtn.querySelector("span").textContent = "Copy";
-    }, 2000);
-  } catch {
-    showToast("Copy failed", "error");
+  if (node.children) {
+    for (const child of node.children) collectFrameNames(child, list);
   }
-});
+  return list;
+}
 
-// ─── Helpers ────────────────────────────────────────
-function populateScreenSelector(names) {
+function populateScreenSelect(names) {
   screenSelect.innerHTML = '<option value="">— Select a screen —</option>';
-  for (const name of names) {
+  const uniqueNames = [...new Set(names)]; // deduplicate
+
+  for (const name of uniqueNames) {
     const opt = document.createElement("option");
     opt.value = name;
     opt.textContent = name;
     screenSelect.appendChild(opt);
   }
-  screenGroup.style.display = "";
+
+  if (uniqueNames.length > 0) {
+    screenGroup.style.display = "";
+    screenSelect.value = uniqueNames[0];
+  } else {
+    screenGroup.style.display = "none";
+  }
+  updateGenerateButton();
 }
 
-function resetScreenSelector() {
-  screenSelect.innerHTML = '<option value="">— Select a screen —</option>';
-  screenGroup.style.display = "none";
-  pipelineScreens = [];
-  selectedNodeId = "";
-  pipelineStatus.hidden = true;
-  screenshotPreview.hidden = true;
-  generateBtn.disabled = true;
-  designSystemBtn.disabled = true;
-}
+// ── Fetch Figma file ───────────────────────────────────
+fetchFileBtn.addEventListener("click", async () => {
+  const url = figmaUrlInput.value.trim();
+  const token = figmaTokenInput.value.trim();
+  if (!url || !token)
+    return showToast("error", "Please enter a Figma URL and token.");
 
-function updateGenerateBtn() {
-  generateBtn.disabled = !screenSelect.value;
-}
+  setButtonLoading(fetchFileBtn, true);
+  showPipelineStep("fetch");
 
-function setLoading(on) {
-  generateBtn.disabled = on;
-  generateBtn.classList.toggle("loading", on);
-  generateBtn.querySelector(".btn-spinner").hidden = !on;
-}
+  try {
+    const res = await fetch("/api/list-screens", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ figmaUrl: url, figmaToken: token }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
 
-function showCode() {
+    completePipelineStep("fetch");
+    showPipelineStep("select");
+
+    populateScreenSelect(data.screens);
+    showToast("success", `Found ${data.screens.length} screens`);
+  } catch (err) {
+    failPipelineStep("fetch");
+    showToast("error", err.message);
+  } finally {
+    setButtonLoading(fetchFileBtn, false);
+  }
+});
+
+// ── Generate ───────────────────────────────────────────
+generateBtn.addEventListener("click", async () => {
+  const screenName = screenSelect.value;
+  if (!screenName) return showToast("error", "Please select a screen.");
+
+  setButtonLoading(generateBtn, true);
+  showPipelineStep("generate");
+
+  try {
+    let res;
+    if (activeSource === "figma-url") {
+      res = await fetch("/api/generate-from-figma", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          figmaUrl: figmaUrlInput.value.trim(),
+          figmaToken: figmaTokenInput.value.trim(),
+          screenName,
+          useAI: aiToggle.checked,
+          framework: selectedFramework,
+        }),
+      });
+    } else {
+      res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          json: jsonInput.value,
+          screenName,
+          useAI: aiToggle.checked,
+          framework: selectedFramework,
+        }),
+      });
+    }
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+
+    completePipelineStep("generate");
+    displayGeneratedCode(data);
+    showToast(
+      "success",
+      `Generated ${data.componentName} (${selectedFramework})`,
+    );
+  } catch (err) {
+    failPipelineStep("generate");
+    showToast("error", err.message);
+  } finally {
+    setButtonLoading(generateBtn, false);
+  }
+});
+
+// ── Display Generated Code ─────────────────────────────
+function displayGeneratedCode(data) {
+  generatedFiles = data.files;
+  componentName.textContent = data.componentName;
+
+  // Update tabs for framework
+  updateTabsForFramework();
+
+  // Show the code panels
   emptyState.style.display = "none";
   codePanel.style.display = "";
   codeTabs.style.display = "";
-  renderActiveTab();
+  iteratePanel.style.display = "";
+
+  // Switch to first tab
+  switchToFirstTab();
 }
 
-function renderActiveTab() {
-  codeContent.textContent = generatedFiles[activeTab] || "";
-}
+// ── CodeMirror Editor ──────────────────────────────────
+function initEditor() {
+  if (editor) return; // Already initialized
 
-function resetPipelineSteps() {
-  [stepFetch, stepSelect, stepScreenshot, stepGenerate].forEach((step) => {
-    step.classList.remove("active", "done", "error");
+  const container = document.getElementById("editorContainer");
+  editor = CodeMirror(container, {
+    lineNumbers: true,
+    theme: "dracula",
+    mode: "htmlmixed",
+    readOnly: false,
+    tabSize: 2,
+  });
+
+  // Editor change handler (debounced)
+  editor.on("change", () => {
+    if (currentTab === "preview") return;
+
+    // Update generatedFiles with edit
+    generatedFiles[currentTab] = editor.getValue();
+
+    // Trigger re-render if needed
+    // Note: Live re-render for preview tab handled when switching back
   });
 }
 
-function setStepState(stepEl, state) {
-  stepEl.classList.remove("active", "done", "error");
-  stepEl.classList.add(state);
+// ── Tab Switching ──────────────────────────────────────
+function switchTab(tab) {
+  currentTab = tab;
+  codeTabs
+    .querySelectorAll(".tab")
+    .forEach((t) => t.classList.remove("active"));
+  const activeTabBtn = codeTabs.querySelector(`[data-tab="${tab}"]`);
+  if (activeTabBtn) activeTabBtn.classList.add("active");
+
+  if (tab === "preview") {
+    codePanel.style.display = "none";
+    previewPanel.style.display = "";
+    initConsole(); // Clear/ready console
+    renderPreview();
+  } else {
+    codePanel.style.display = "";
+    previewPanel.style.display = "none";
+
+    // Ensure editor is initialized (lazy init)
+    initEditor();
+
+    // Set mode and content based on tab
+    let mode = "htmlmixed";
+    if (tab === "ts" || tab === "tsx") mode = "jsx";
+    if (tab === "css" || tab === "scss") mode = "css";
+
+    editor.setOption("mode", mode);
+    editor.setValue(generatedFiles[tab] || "// No content");
+
+    // Allow UI update
+    setTimeout(() => editor.refresh(), 0);
+  }
 }
 
-// ─── Toast ──────────────────────────────────────────
-const toast = $("toast");
-function showToast(message, type = "info") {
-  toast.querySelector(".toast-message").textContent = message;
-  toast.querySelector(".toast-icon").textContent = type === "error" ? "✕" : "✓";
-  toast.className = `toast show ${type}`;
-  toast.hidden = false;
-  setTimeout(() => {
-    toast.classList.remove("show");
-    setTimeout(() => (toast.hidden = true), 300);
-  }, 4000);
-}
+// Attach click events for dynamically-created tabs
+codeTabs.addEventListener("click", (e) => {
+  const tab = e.target.closest(".tab");
+  if (tab && tab.dataset.tab) {
+    switchTab(tab.dataset.tab);
+  }
+});
 
-// ─── Design System ──────────────────────────────────
-designSystemBtn.addEventListener("click", async () => {
-  const url = figmaUrlInput.value.trim();
-  const token = figmaTokenInput.value.trim();
+// ── Live Preview Rendering ─────────────────────────────
+function renderPreview() {
+  let html = "";
+  let css = "";
 
-  if (!url || !token) {
-    showToast("Please enter both a Figma URL and access token.", "error");
-    return;
+  if (selectedFramework === "react") {
+    // Extract JSX body from TSX for static preview
+    const tsx = generatedFiles.tsx || "";
+    css = generatedFiles.css || "";
+    html = extractJsxBody(tsx);
+  } else {
+    html = generatedFiles.html || "";
+    css = (generatedFiles.scss || "").replace(/\$[\w-]+:\s*[^;]+;/g, ""); // strip SCSS variables
   }
 
-  designSystemBtn.classList.add("loading");
-  designSystemBtn.disabled = true;
-  designSystemBtn.querySelector(".btn-spinner").hidden = false;
+  // Inject console capture script
+  const consoleScript = `
+    <script>
+      (function() {
+        const _log = console.log;
+        const _warn = console.warn;
+        const _error = console.error;
+        const _info = console.info;
+
+        function notify(type, args) {
+          try {
+            const msg = Array.from(args).map(a => 
+              typeof a === 'object' ? JSON.stringify(a) : String(a)
+            ).join(' ');
+            window.parent.postMessage({ type: 'console', level: type, message: msg }, '*');
+          } catch(e) {}
+        }
+
+        console.log = function(...args) { notify('log', args); _log.apply(console, args); };
+        console.warn = function(...args) { notify('warn', args); _warn.apply(console, args); };
+        console.error = function(...args) { notify('error', args); _error.apply(console, args); };
+        console.info = function(...args) { notify('info', args); _info.apply(console, args); };
+
+        window.onerror = function(msg, source, line, col, error) {
+          notify('error', [\`Error: \${msg} (\${line}:\${col})\`]);
+        };
+      })();
+    </script>
+  `;
+
+  const doc = `<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; padding: 16px; background: #fff; }
+    ${css}
+  </style>
+  ${consoleScript}
+</head>
+<body>${html}</body>
+</html>`;
+
+  previewFrame.srcdoc = doc;
+}
+
+function extractJsxBody(tsx) {
+  // Try to find the return statement's JSX
+  const returnMatch = tsx.match(/return\s*\(\s*([\s\S]*?)\s*\)\s*;?\s*}/);
+  if (returnMatch) {
+    let jsx = returnMatch[1];
+    // Convert className to class for HTML preview
+    jsx = jsx.replace(/className=\{styles\.(\w+)\}/g, 'class="$1"');
+    jsx = jsx.replace(/className="([^"]+)"/g, 'class="$1"');
+    // Remove self-closing React-specific patterns
+    jsx = jsx.replace(/\{\/\*.*?\*\/\}/g, "");
+    return jsx;
+  }
+  return "<p>Preview not available for this component.</p>";
+}
+
+// ── Preview Viewport Buttons ──────────────────────────
+$$(".viewport-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    $$(".viewport-btn").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    const wrapper = $(".preview-frame-wrapper");
+    wrapper.style.maxWidth = btn.dataset.width;
+  });
+});
+
+// ── Console Logic ──────────────────────────────────────
+function initConsole() {
+  consoleOutput.innerHTML = ""; // Clear on fresh render
+}
+
+window.addEventListener("message", (e) => {
+  if (e.data && e.data.type === "console") {
+    addConsoleMessage(e.data.level, e.data.message);
+  }
+});
+
+function addConsoleMessage(level, text) {
+  const line = document.createElement("div");
+  line.className = `console-msg ${level}`;
+
+  const time = new Date().toLocaleTimeString("en-US", {
+    hour12: false,
+    hour: "numeric",
+    minute: "numeric",
+    second: "numeric",
+  });
+
+  line.innerHTML = `
+    <span class="console-timestamp">[${time}]</span>
+    <span class="console-text">${escapeHtml(text)}</span>
+  `;
+  consoleOutput.appendChild(line);
+  consoleOutput.scrollTop = consoleOutput.scrollHeight;
+}
+
+consoleClearBtn.addEventListener("click", () => {
+  consoleOutput.innerHTML = "";
+});
+
+function escapeHtml(text) {
+  if (!text) return "";
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+// ── Iterate Feature ────────────────────────────────────
+iterateBtn.addEventListener("click", async () => {
+  const prompt = iterateInput.value.trim();
+  if (!prompt) return showToast("error", "Enter a refinement instruction.");
+  if (!Object.keys(generatedFiles).length)
+    return showToast("error", "Generate code first.");
+
+  setButtonLoading(iterateBtn, true);
 
   try {
-    const res = await fetch("/api/design-system", {
+    const res = await fetch("/api/iterate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        figmaUrl: url,
-        figmaToken: token,
-        format: dsFormat,
+        files: generatedFiles,
+        framework: selectedFramework,
+        prompt,
       }),
     });
 
     const data = await res.json();
     if (!res.ok) throw new Error(data.error);
 
-    dsCssContent = data.cssContent;
-    showDesignSystemResults(data);
-    showToast(
-      `Design system extracted! (${data.stats.source} source)`,
-      "success",
-    );
+    generatedFiles = data.files;
+
+    // Update editor content if current tab matches
+    if (editor && currentTab !== "preview" && generatedFiles[currentTab]) {
+      editor.setValue(generatedFiles[currentTab]);
+    }
+
+    switchTab(currentTab === "preview" ? "preview" : currentTab);
+    iterateInput.value = "";
+    showToast("success", "Code refined successfully!");
   } catch (err) {
-    showToast(err.message, "error");
+    showToast("error", err.message);
   } finally {
-    designSystemBtn.classList.remove("loading");
-    designSystemBtn.disabled = false;
-    designSystemBtn.querySelector(".btn-spinner").hidden = true;
+    setButtonLoading(iterateBtn, false);
   }
 });
 
-function showDesignSystemResults(data) {
-  // Show results panel, hide empty state and code
+// Allow Enter key to submit iterate prompt
+iterateInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    iterateBtn.click();
+  }
+});
+
+// ── Copy Button ────────────────────────────────────────
+copyBtn.addEventListener("click", async () => {
+  const text = editor ? editor.getValue() : "";
+  try {
+    await navigator.clipboard.writeText(text);
+    copyBtn.querySelector("span").textContent = "Copied!";
+    setTimeout(() => {
+      copyBtn.querySelector("span").textContent = "Copy";
+    }, 2000);
+  } catch {
+    showToast("error", "Copy failed");
+  }
+});
+
+// ── Design System ──────────────────────────────────────
+designSystemBtn.addEventListener("click", async () => {
+  const url = figmaUrlInput.value.trim();
+  const token = figmaTokenInput.value.trim();
+  if (!url || !token)
+    return showToast("error", "Please enter a Figma URL and token.");
+
+  setButtonLoading(designSystemBtn, true);
+
+  try {
+    const res = await fetch("/api/design-system", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ figmaUrl: url, figmaToken: token }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+
+    displayDesignSystem(data);
+    showToast("success", "Design system extracted!");
+  } catch (err) {
+    showToast("error", err.message);
+  } finally {
+    setButtonLoading(designSystemBtn, false);
+  }
+});
+
+function displayDesignSystem(data) {
+  cachedDesignSystemCSS = data.css || "";
+  cachedDesignSystemSCSS = data.scss || "";
+
+  const dsResults = $("#designSystemResults");
+  const dsStats = $("#dsStats");
+  const dsCode = $("#dsCodeContent");
+  const dsSourceBadge = $("#dsSourceBadge");
+  const formatToggle = $("#formatToggle");
+
   emptyState.style.display = "none";
   codePanel.style.display = "none";
   codeTabs.style.display = "none";
-  designSystemResults.style.display = "";
+  dsResults.style.display = "";
   formatToggle.hidden = false;
 
-  // Source badge
-  dsSourceBadge.textContent = data.stats.source;
-  dsSourceBadge.className = `ds-source-badge ${data.stats.source}`;
+  dsSourceBadge.textContent = data.source || "styles";
 
-  // Stats badges
-  const statItems = [
-    { label: "Colors", count: data.stats.colors, category: "colors" },
-    {
-      label: "Typography",
-      count: data.stats.typography,
-      category: "typography",
-    },
-    { label: "Spacing", count: data.stats.spacing, category: "spacing" },
-    { label: "Radii", count: data.stats.radii, category: "radii" },
-    { label: "Shadows", count: data.stats.shadows, category: "shadows" },
-  ].filter((s) => s.count > 0);
-
-  dsStats.innerHTML = statItems
+  const stats = data.stats || {};
+  dsStats.innerHTML = Object.entries(stats)
     .map(
-      (s) =>
-        `<div class="ds-stat-badge">
-      <span class="stat-dot ${s.category}"></span>
-      <span class="stat-count">${s.count}</span>
-      <span>${s.label}</span>
-    </div>`,
+      ([k, v]) =>
+        `<div class="ds-stat"><span class="ds-stat-value">${v}</span><span class="ds-stat-label">${k}</span></div>`,
     )
     .join("");
 
-  // CSS content
-  dsCodeContent.textContent = data.cssContent;
+  dsCode.textContent =
+    dsOutputFormat === "scss" ? cachedDesignSystemSCSS : cachedDesignSystemCSS;
 }
 
 // Format toggle
-document.querySelectorAll(".format-btn").forEach((btn) => {
-  btn.addEventListener("click", async () => {
-    const format = btn.dataset.format;
-    if (format === dsFormat) return;
-
-    dsFormat = format;
-    document
-      .querySelectorAll(".format-btn")
-      .forEach((b) => b.classList.remove("active"));
+$$(".format-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    $$(".format-btn").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
-
-    // Re-fetch with new format
-    const url = figmaUrlInput.value.trim();
-    const token = figmaTokenInput.value.trim();
-    if (!url || !token) return;
-
-    try {
-      const res = await fetch("/api/design-system", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ figmaUrl: url, figmaToken: token, format }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-
-      dsCssContent = data.cssContent;
-      dsCodeContent.textContent = data.cssContent;
-    } catch (err) {
-      showToast(err.message, "error");
-    }
+    dsOutputFormat = btn.dataset.format;
+    const dsCode = $("#dsCodeContent");
+    dsCode.textContent =
+      dsOutputFormat === "scss"
+        ? cachedDesignSystemSCSS
+        : cachedDesignSystemCSS;
   });
 });
 
-// Copy design system CSS
-dsCopyBtn.addEventListener("click", async () => {
-  try {
-    await navigator.clipboard.writeText(dsCssContent);
-    dsCopyBtn.querySelector("span").textContent = "Copied!";
-    setTimeout(() => {
-      dsCopyBtn.querySelector("span").textContent = "Copy";
-    }, 2000);
-  } catch {
-    showToast("Copy failed", "error");
-  }
-});
+// DS copy/download
+const dsCopyBtn = $("#dsCopyBtn");
+const dsDownloadBtn = $("#dsDownloadBtn");
+if (dsCopyBtn) {
+  dsCopyBtn.addEventListener("click", async () => {
+    const text =
+      dsOutputFormat === "scss"
+        ? cachedDesignSystemSCSS
+        : cachedDesignSystemCSS;
+    try {
+      await navigator.clipboard.writeText(text);
+      dsCopyBtn.querySelector("span").textContent = "Copied!";
+      setTimeout(() => {
+        dsCopyBtn.querySelector("span").textContent = "Copy";
+      }, 2000);
+    } catch {
+      showToast("error", "Copy failed");
+    }
+  });
+}
+if (dsDownloadBtn) {
+  dsDownloadBtn.addEventListener("click", () => {
+    const text =
+      dsOutputFormat === "scss"
+        ? cachedDesignSystemSCSS
+        : cachedDesignSystemCSS;
+    const ext = dsOutputFormat === "scss" ? "scss" : "css";
+    const blob = new Blob([text], { type: "text/css" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `design-tokens.${ext}`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  });
+}
 
-// Download design system CSS
-dsDownloadBtn.addEventListener("click", () => {
-  const ext = dsFormat === "scss" ? "scss" : "css";
-  const blob = new Blob([dsCssContent], { type: "text/css" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `_design-system.${ext}`;
-  a.click();
-  URL.revokeObjectURL(url);
-  showToast(`Downloaded _design-system.${ext}`, "success");
-});
+// ── Pipeline Status UI ─────────────────────────────────
+function showPipelineStep(step) {
+  pipelineStatus.hidden = false;
+  const el = $(`[data-step="${step}"]`);
+  if (el) el.classList.add("active");
+}
+function completePipelineStep(step) {
+  const el = $(`[data-step="${step}"]`);
+  if (el) {
+    el.classList.remove("active");
+    el.classList.add("done");
+  }
+}
+function failPipelineStep(step) {
+  const el = $(`[data-step="${step}"]`);
+  if (el) {
+    el.classList.remove("active");
+    el.classList.add("error");
+  }
+}
+
+// ── Button Loading State ───────────────────────────────
+function setButtonLoading(btn, loading) {
+  const text = btn.querySelector(".btn-text");
+  const spinner = btn.querySelector(".btn-spinner");
+  if (text) text.hidden = loading;
+  if (spinner) spinner.hidden = !loading;
+  btn.disabled = loading;
+}
+
+// ── Toast Notifications ────────────────────────────────
+function showToast(type, message) {
+  const toast = $("#toast");
+  const icon = toast.querySelector(".toast-icon");
+  const msg = toast.querySelector(".toast-message");
+
+  toast.className = `toast toast-${type}`;
+  msg.textContent = message;
+
+  if (type === "success") {
+    icon.innerHTML =
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>';
+  } else {
+    icon.innerHTML =
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
+  }
+
+  toast.hidden = false;
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(() => {
+    toast.hidden = true;
+  }, 5000);
+}
+
+// ── Initial State ──────────────────────────────────────
+updateTabsForFramework();
+updateGenerateButton();

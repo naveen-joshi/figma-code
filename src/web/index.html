@@ -4,14 +4,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Figma → Angular Generator</title>
-    <meta name="description" content="Generate Angular components from Figma designs using AI">
+    <title>Figma → Code Generator</title>
+    <meta name="description" content="Generate Angular or React components from Figma designs using AI">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link
         href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
         rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/theme/dracula.min.css">
     <link rel="stylesheet" href="styles.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/xml/xml.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/javascript/javascript.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/css/css.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/htmlmixed/htmlmixed.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/jsx/jsx.min.js"></script>
 </head>
 
 <body>
@@ -32,7 +40,7 @@
                 </svg>
             </div>
             <div class="brand-text">
-                <h1>Figma → Angular</h1>
+                <h1>Figma → Code</h1>
                 <span class="badge">AI-Powered</span>
             </div>
         </div>
@@ -61,6 +69,32 @@
             </div>
 
             <div class="panel-body">
+                <!-- Framework Selector -->
+                <div class="framework-selector">
+                    <span class="fw-label">Framework</span>
+                    <div class="fw-pills">
+                        <button class="fw-pill active" data-framework="angular" id="fwAngular">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                                <path
+                                    d="M12 2L2 7l1.5 12.5L12 22l8.5-2.5L22 7L12 2zm0 2.16L18.76 7 12 19.25 5.24 7 12 4.16z" />
+                            </svg>
+                            Angular
+                        </button>
+                        <button class="fw-pill" data-framework="react" id="fwReact">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                                <circle cx="12" cy="12" r="2.5" />
+                                <ellipse cx="12" cy="12" rx="10" ry="4" fill="none" stroke="currentColor"
+                                    stroke-width="1" />
+                                <ellipse cx="12" cy="12" rx="10" ry="4" fill="none" stroke="currentColor"
+                                    stroke-width="1" transform="rotate(60 12 12)" />
+                                <ellipse cx="12" cy="12" rx="10" ry="4" fill="none" stroke="currentColor"
+                                    stroke-width="1" transform="rotate(120 12 12)" />
+                            </svg>
+                            React
+                        </button>
+                    </div>
+                </div>
+
                 <!-- Source tabs -->
                 <div class="source-tabs">
                     <button class="source-tab active" data-source="figma-url">
@@ -257,9 +291,18 @@
 
             <!-- Tabs -->
             <div class="code-tabs" id="codeTabs" style="display:none">
+                <!-- Angular tabs -->
                 <button class="tab active" data-tab="html">HTML</button>
                 <button class="tab" data-tab="scss">SCSS</button>
                 <button class="tab" data-tab="ts">TypeScript</button>
+                <!-- Preview tab (always available) -->
+                <button class="tab tab-preview" data-tab="preview">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                        <circle cx="12" cy="12" r="3" />
+                    </svg>
+                    Preview
+                </button>
             </div>
 
             <div class="panel-body output-body">
@@ -279,16 +322,93 @@
                 <!-- Code display -->
                 <div class="code-panel" id="codePanel" style="display:none">
                     <div class="code-header">
-                        <button class="copy-btn" id="copyBtn" title="Copy to clipboard">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                stroke-width="2">
-                                <rect x="9" y="9" width="13" height="13" rx="2" />
-                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                            </svg>
-                            <span>Copy</span>
+                        <span class="editor-label">Editor</span>
+                        <div class="code-actions">
+                            <button class="copy-btn" id="copyBtn" title="Copy to clipboard">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <rect x="9" y="9" width="13" height="13" rx="2" />
+                                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                                </svg>
+                                <span>Copy</span>
+                            </button>
+                        </div>
+                    </div>
+                    <!-- CodeMirror container replaces <pre> -->
+                    <div id="editorContainer" class="editor-container"></div>
+                </div>
+
+                <!-- Preview Panel -->
+                <div class="preview-panel" id="previewPanel" style="display:none">
+                    <div class="preview-content">
+                        <div class="preview-toolbar">
+                            <span class="preview-label">Live Preview</span>
+                            <div class="preview-viewport-btns">
+                                <button class="viewport-btn active" data-width="100%" title="Full width">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                        stroke-width="2">
+                                        <rect x="2" y="3" width="20" height="14" rx="2" />
+                                        <line x1="8" y1="21" x2="16" y2="21" />
+                                        <line x1="12" y1="17" x2="12" y2="21" />
+                                    </svg>
+                                </button>
+                                <button class="viewport-btn" data-width="375px" title="Mobile (375px)">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                        stroke-width="2">
+                                        <rect x="5" y="2" width="14" height="20" rx="2" />
+                                        <line x1="12" y1="18" x2="12" y2="18" />
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="preview-frame-wrapper">
+                            <iframe id="previewFrame" class="preview-frame" sandbox="allow-same-origin allow-scripts"
+                                title="Component Preview"></iframe>
+                        </div>
+                    </div>
+
+                    <!-- Console Panel -->
+                    <div class="console-panel" id="consolePanel">
+                        <div class="console-header">
+                            <span class="console-title">Console</span>
+                            <button class="console-clear" id="consoleClearBtn" title="Clear console">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <circle cx="12" cy="12" r="10"></circle>
+                                    <line x1="15" y1="9" x2="9" y2="15"></line>
+                                    <line x1="9" y1="9" x2="15" y2="15"></line>
+                                </svg>
+                            </button>
+                        </div>
+                        <div class="console-output" id="consoleOutput"></div>
+                    </div>
+                </div>
+
+                <!-- Iterate Panel -->
+                <div class="iterate-panel" id="iteratePanel" style="display:none">
+                    <div class="iterate-header">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <path
+                                d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7z" />
+                            <line x1="9" y1="21" x2="15" y2="21" />
+                        </svg>
+                        <span>Refine with AI</span>
+                    </div>
+                    <div class="iterate-input-row">
+                        <input type="text" id="iterateInput"
+                            placeholder="e.g. Make the button larger, add a dark theme..." spellcheck="false">
+                        <button class="btn-iterate" id="iterateBtn">
+                            <span class="btn-text">Refine</span>
+                            <span class="btn-spinner" hidden>
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <path
+                                        d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+                                </svg>
+                            </span>
                         </button>
                     </div>
-                    <pre class="code-block"><code id="codeContent"></code></pre>
                 </div>
 
                 <!-- Design System Results -->
